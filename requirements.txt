@@ -1,0 +1,9 @@
+streamlit
+PyMuPDF==1.24.8
+numpy
+faiss-cpu
+sentence-transformers
+huggingface-hub
+deep-translator
+google-generativeai
+protobuf==4.25.1
