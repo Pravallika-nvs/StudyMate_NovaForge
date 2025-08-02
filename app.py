@@ -114,10 +114,13 @@ def generate_grounded_answer(query):
     return response.choices[0].message["content"], results
 
 # ==============================
-# 🔹 MCQ Generation
+# 🔹 Generate MCQs
 # ==============================
 def generate_mcqs(num_mcqs=10):
-    selected_chunks = random.sample(st.session_state.chunks, min(10, len(st.session_state.chunks)))
+    selected_chunks = random.sample(
+        st.session_state.chunks,
+        min(num_mcqs, len(st.session_state.chunks))
+    )
     combined_text = "\n\n".join(selected_chunks)
 
     messages = [
@@ -128,7 +131,7 @@ def generate_mcqs(num_mcqs=10):
             [
                 {
                     "question": "...",
-                    "options": ["A...", "B...", "C...", "D..."],
+                    "options": ["Option 1", "Option 2", "Option 3", "Option 4"],
                     "answer": "A",
                     "concept": "...",
                     "explanation": "..."
@@ -137,16 +140,35 @@ def generate_mcqs(num_mcqs=10):
 
          - 4 options per question
          - 10 questions total
+         - Answer must be only a letter: A, B, C, or D
          """},
         {"role": "user", "content": f"PDF Content:\n{combined_text}\n\nGenerate {num_mcqs} MCQs."}
     ]
+
     response = client.chat_completion(messages=messages, max_tokens=2000)
     json_str = response.choices[0].message.content.strip()
-    json_str = json_str[json_str.find("[") : json_str.rfind("]") + 1]
+    json_str = json_str[json_str.find("["): json_str.rfind("]") + 1]
+
     try:
-        return json.loads(json_str)
+        mcqs = json.loads(json_str)
     except:
         return []
+
+    # ✅ Ensure answer is always 'A', 'B', 'C', or 'D'
+    letters = ["A", "B", "C", "D"]
+    for q in mcqs:
+        ans = q.get('answer', '').strip().upper()
+        options = q.get('options', [])
+        if len(ans) != 1 or ans not in letters:
+            # Try to match the answer string with an option
+            for idx, opt in enumerate(options):
+                if ans == opt.strip().upper():
+                    q['answer'] = letters[idx]
+                    break
+            else:
+                # Default to first option if mismatch
+                q['answer'] = "A"
+    return mcqs
 
 # ==============================
 # 🔹 Multi-PDF Upload
@@ -181,9 +203,24 @@ if prompt:
     st.chat_message("assistant").markdown(answer_final)
     st.session_state.chat_history.append({"user": prompt, "bot": answer_final})
 
-# ==============================
-# 🔹 Quiz Section
-# ==============================
+import re
+
+def extract_letter(ans):
+    """
+    Tries to extract the leading option letter (A-D) from the answer string.
+    Returns the letter or None if not found.
+    """
+    ans = ans.strip().upper()
+    # Match a single A-D as the entire string, or at start
+    match = re.match(r"^([A-D])\b", ans)
+    if match:
+        return match.group(1)
+    # Sometimes format like "Option A ..."
+    alt_match = re.match(r"OPTION\s*([A-D])", ans)
+    if alt_match:
+        return alt_match.group(1)
+    return None
+
 def submit_quiz():
     """Evaluate the quiz and display the score."""
     if not st.session_state.quiz_questions:
@@ -195,17 +232,26 @@ def submit_quiz():
 
     for i, item in enumerate(st.session_state.quiz_questions, start=1):
         qkey = f"q{i}"
-        answer = item['answer'].strip().upper()
+        answer = item['answer']
+        letter = extract_letter(answer)
         options = item['options']
-        index = ord(answer) - 65  # Convert 'A'->0
+        user_answer = st.session_state.quiz_answers[qkey]
 
-        if 0 <= index < len(options):
-            correct_option = options[index]
-            user_answer = st.session_state.quiz_answers[qkey]
-            if user_answer == correct_option:
-                score += 1
+        if letter:  # If we extracted a letter
+            index = ord(letter) - 65  # Convert 'A'->0
+            if 0 <= index < len(options):
+                correct_option = options[index]
+                if user_answer == correct_option:
+                    score += 1
+            else:
+                st.warning(f"⚠️ Invalid answer '{item['answer']}' for Q{i}. Options: {options}")
         else:
-            st.warning(f"⚠️ Invalid answer '{item['answer']}' for Q{i}. Options: {options}")
+            # As a fallback, try direct string comparison to options
+            if answer in options:
+                if user_answer == answer:
+                    score += 1
+            else:
+                st.warning(f"⚠️ Could not extract option letter from '{item['answer']}' for Q{i}.")
 
     st.success(f"✅ Your Score: {score}/{total}")
 
@@ -224,3 +270,4 @@ if st.session_state.quiz_questions:
             )
         if st.button("✅ Submit Quiz"):
             submit_quiz()
+
